@@ -1,4 +1,3 @@
-// $Id$
 
 Drupal.behaviors.dingCampaignEdit = function () {
   $('#node-form')
@@ -13,6 +12,12 @@ Drupal.behaviors.dingCampaignEdit = function () {
           else if ($(this).val() == 'image-only') {
             $('#node-form')
               .find('.body-field-wrapper').hide('fast').end()
+              .find('#edit-field-campaign-image-0-ahah-wrapper').show('fast').end()
+            .end();
+          }
+          else {
+            $('#node-form')
+              .find('.body-field-wrapper').show('fast').end()
               .find('#edit-field-campaign-image-0-ahah-wrapper').show('fast').end()
             .end();
           }
