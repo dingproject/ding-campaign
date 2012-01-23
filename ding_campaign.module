@@ -1,6 +1,4 @@
 <?php
-// $Id$
-
 /**
  * @file ding_campaign.module
  * Provides the campaign node type for the Ding! project.
@@ -114,8 +112,8 @@ function ding_campaign_nodeapi(&$node, $op, $teaser, $page) {
       break;
     case 'update':
       if ($node->type == 'campaign') {
-        // Check if theres an existing row in {ding_campaign}
-        $prev_vid = db_result(db_query("SELECT vid FROM {ding_campaign} WHERE nid=%d;", $node->nid));
+        // Check if there's an existing row in {ding_campaign}
+        $prev_vid = db_result(db_query("SELECT vid FROM {ding_campaign} WHERE nid = %d", $node->nid));
         // If this is a new node or we're adding a new revision,
         if ($node->revision || !$prev_vid) {
           drupal_write_record('ding_campaign', $node);
@@ -123,6 +121,11 @@ function ding_campaign_nodeapi(&$node, $op, $teaser, $page) {
         else {
           drupal_write_record('ding_campaign', $node, array('nid', 'vid'));
         }
+
+        db_query('UPDATE {ding_campaign_rule} SET status = %d WHERE nid = %d', array(
+          ':status' => $node->status,
+          ':nid' => $node->nid,
+        ));
       }
       else {
         // When updating a node, purge the current campaign selections first.
@@ -151,13 +154,13 @@ function ding_campaign_nodeapi(&$node, $op, $teaser, $page) {
             // We use $now as delta to be reasonably sure not to have
             // delta collisions within the same nid, since nid+delta is
             // the primary key for ding_campaign_rule.
-            $cols[] = "(%d, $now, 'page', '%s', %d)";
+            $cols[] = "(%d, 1, $now, 'page', '%s', %d)";
             $params[] = $campaign_nid;
             $params[] = $node->title . ' [nid:' . $node->nid . ']';
             $params[] = $node->nid;
           }
 
-          db_query('INSERT INTO {ding_campaign_rule} (nid, delta, type, value, value_id) VALUES ' . implode(',', $cols), $params);
+          db_query('INSERT INTO {ding_campaign_rule} (nid, status, delta, type, value, value_id) VALUES ' . implode(',', $cols), $params);
         }
       }
       break;
@@ -203,7 +206,7 @@ function ding_campaign_theme() {
       'arguments' => array('element' => NULL),
     ),
     'ding_campaign_relevant_campaigns' => array(
-      'context' => array('context' => NULL, 'max_count' => NULL),
+      'context' => array('context' => NULL, 'max_count' => NULL, 'offset' => NULL),
     ),
   );
 }
@@ -339,16 +342,15 @@ function ding_campaign_rule_element_process($element, $form_state) {
     '#value' => (isset($element['#delta'])) ? $element['#delta'] : $element['#value']['delta'],
   );
 
+  // Generate a list of options based on the available campagin types
+  $options = ding_campaign_campaign_types();
+  foreach($options as $id => $type) {
+    $options[$id] = $type['title'];
+  }
   $element['type'] = array(
     '#type' => 'select',
     '#title' => t('Type'),
-    '#options' => array(
-      'page' => t('Specific page'),
-      'path' => t('Path'),
-      'search_term' => t('Search term'),
-      'taxonomy' => t('Taxonomy term'),
-      'generic' => t('Generic'),
-    ),
+    '#options' => $options,
     '#default_value' => $element['#value']['type'],
   );
 
@@ -364,6 +366,17 @@ function ding_campaign_rule_element_process($element, $form_state) {
     // Set up autocomplete pointing to a dummy path that just returns an
     // empty array. We set the correct path via JavaScript.
     '#autocomplete_path' => 'ding_campaign/autocomplete/dummy/empty',
+    '#size' => 60,
+  );
+  
+  // Generate som help based on the available campagin types
+  $help = '';
+  foreach (ding_campaign_campaign_types() as $id => $type) {
+    $help .= '<dt class="' . $id . '">' . t($type['title']) . '</dt><dd class="' . $id . '">' . t($type['description']) . '</dd>';
+  }
+  $element['help'] = array(
+    '#type' => 'markup',
+  	'#value' => '<dl>'.$help.'</dl>',
   );
 
   return $element;
@@ -383,10 +396,12 @@ function ding_campaign_rule_element_validate($element, &$form_state) {
  *    Array of context items – search_term, library, page and taxonomy.
  * @param integer $max_count
  *    The maximum number of campaigns to return.
+ * @param integer $offset
+ *    The index of the campaign from which to count when returning campaigns.
  * @return array
  *    Array of node ids of relevant campaigns, sorted by relevancy.
  */
-function ding_campaign_get_relevant($context, $max_count = -1) {
+function ding_campaign_get_relevant($context, $max_count = -1, $offset = 0) {
   // Make sure we have a positive number before we proceed.
   $max_count = (integer) $max_count;
   if ($max_count < 1) {
@@ -401,14 +416,14 @@ function ding_campaign_get_relevant($context, $max_count = -1) {
     else {
       $nid = (int) $context['page'];
     }
-    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'page' AND value_id = %d;", $nid);
+    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'page' AND status = 1 AND value_id = %d;", $nid);
     while ($camp_nid = db_result($query)) {
       $campaigns[$camp_nid] += 9;
     }
   }
 
   // Get all path-based campaign rules.
-  $query = db_query("SELECT * FROM {ding_campaign_rule} WHERE type = 'path';");
+  $query = db_query("SELECT * FROM {ding_campaign_rule} WHERE type = 'path' AND status = 1;");
   while ($row = db_fetch_array($query)) {
     $path = drupal_get_path_alias($_GET['q']);
     // Compare with the internal and path alias (if any).
@@ -434,7 +449,7 @@ function ding_campaign_get_relevant($context, $max_count = -1) {
       $condition = "= '" . $keys . "'";
     }
 
-    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'search_term' AND value " . $condition);
+    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'search_term' AND status = 1 AND value " . $condition);
     while ($camp_nid = db_result($query)) {
       $campaigns[$camp_nid] += 7;
     }
@@ -447,7 +462,7 @@ function ding_campaign_get_relevant($context, $max_count = -1) {
     else {
       $nid = (int) $context['library'];
     }
-    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'library' AND value_id = %d;", $nid);
+    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'library' AND status = 1 AND value_id = %d;", $nid);
     while ($camp_nid = db_result($query)) {
       $campaigns[$camp_nid] += 5;
     }
@@ -460,7 +475,7 @@ function ding_campaign_get_relevant($context, $max_count = -1) {
     else {
       $tid = (int) $context['taxonomy'];
     }
-    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'taxonomy' AND value_id = %d;", $tid);
+    $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'taxonomy' AND status = 1 AND value_id = %d;", $tid);
     while ($camp_nid = db_result($query)) {
       $campaigns[$camp_nid] += 3;
     }
@@ -468,15 +483,15 @@ function ding_campaign_get_relevant($context, $max_count = -1) {
 
   // Give a small (and random) amount of relevancy to generic campaigns
   // that have not scored in any of the other categories.
-  $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'generic'");
+  $query = db_query("SELECT nid FROM {ding_campaign_rule} WHERE type = 'generic AND status = 1'");
   while ($camp_nid = db_result($query)) {
     if (!isset($campaigns[$camp_nid]) || $campaigns[$camp_nid] == 0) {
-      $campaigns[$camp_nid] += (mt_rand(1, 10) / 10);
+      $campaigns[$camp_nid] = (mt_rand(1, 10) / 10);
     }
   }
 
   arsort($campaigns);
-  return array_slice(array_keys($campaigns), 0, $max_count);
+  return array_slice(array_keys($campaigns), $offset, $max_count);
 }
 
 /**
@@ -496,12 +511,14 @@ function theme_ding_campaign_rule($element) {
  *    The context array passed to ding_campaign_get_relevant()
  * @param integer $max_count
  *    The maximum number of campaigns to return.
+ * @param integer $offset
+ *    The index of the campaign from which to count when returning campaigns.
  * @return string
  *    Rendered campaign nodes, or FALSE if no match was found.
  * @see ding_campaign_get_relevant().
  */
-function theme_ding_campaign_relevant_campaigns($context, $max_count = DING_CAMPAIGN_DEFAULT_COUNT) {
-  $campaigns = ding_campaign_get_relevant($context, $max_count);
+function theme_ding_campaign_relevant_campaigns($context, $max_count = DING_CAMPAIGN_DEFAULT_COUNT, $offset = 0) {
+  $campaigns = ding_campaign_get_relevant($context, $max_count, $offset);
   $output = '';
 
   foreach ($campaigns as $nid) {
@@ -543,6 +560,25 @@ function ding_campaign_default_theme_choices() {
     'blue' => t('Blue'),
     'green' => t('Green'),
   );
+}
+
+/**
+ * Returns an array of campaign types.
+ */
+function ding_campaign_campaign_types() {
+  $types = array(
+  	'page' => array('title' => t('Specific page'),
+                    'description' => t('Adds relevance to the campaign if shown with a specific node.')),
+    'path' => array('title' => t('Path'),
+                    'description' => t('Adds relevance to the campaign if the current path or path alias matches. Do not include the leading /. Use * as wildcard. Example: blog/* matches all blog posts.')),
+    'search_term' => array('title' => t('Search term'),
+                           'description' =>  t('Adds relevance to the campaign on search result pages for the selected term.')),
+    'taxonomy' => array('title' => t('Taxonomy term'),
+                        'description' => t('Adds relevance to the campaign if shown with a node containing the selected term.')),
+    'generic' => array('title' => t('Generic'),
+    									 'description' => t('Gives a small bit of rank on all pages, so that the campaign will show up if there is not enough relevant campaigns.')),
+  );
+  return $types;
 }
 
 require_once('ding_campaign.features.inc');

@@ -1,4 +1,3 @@
-// $Id$
 
 Drupal.behaviors.dingCampaignRules = function () {
   $('#campaign-rules')
@@ -36,6 +35,10 @@ Drupal.behaviors.dingCampaignRules = function () {
           else {
             $(this).find("div:has(input.form-text)").show();
           }
+          
+          // Display the description matching the type
+          $(this).find('dl > *').hide();
+          $(this).find('dl dd.' + type).show();
       });
 };
 
