@@ -238,6 +238,7 @@ function ding_campaign_form_alter(&$form, $form_state, $form_id) {
         '#options' => array(
           'text-only' => t('Text only'),
           'image-only' => t('Image only'),
+          'wysiwyg-title' => t('WYSIWYG with title'),
         ),
         '#attributes' => array('class' => 'campaign-type-select'),
         '#default_value' => (isset($node->campaign_type)) ? $node->campaign_type : 'text-only',
@@ -525,7 +526,12 @@ function theme_ding_campaign_relevant_campaigns($context, $max_count = DING_CAMP
     if ($nid > 0) {
       $node = node_load($nid);
       if ($node && $node->status) {
-        $rendered_node = node_view($node, TRUE, FALSE, FALSE);
+        if($node->campaign_type == 'wysiwyg-title') {
+          $rendered_node = node_view($node, FALSE, TRUE, TRUE);
+        }
+        else {
+          $rendered_node = node_view($node, TRUE, FALSE, FALSE);
+        }
         $output .= $rendered_node;
       }
     }
